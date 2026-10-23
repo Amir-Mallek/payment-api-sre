@@ -1,4 +1,4 @@
-"""Legacy report export, added WITHOUT tests on purpose (non-compliant PR demo for the SonarQube Quality Gate)."""
+"""Legacy report export, added WITHOUT tests on purpose (non-compliant PR demo for SonarQube)."""
 
 import hashlib
 import random
