@@ -1,11 +1,13 @@
 # OpenTelemetry Collector (gateway): receives OTLP traces from the app and forwards them to Tempo.
+# Tail sampling keeps every trace worth investigating (errors, > 200 ms) and 10 % of the healthy ones:
+# without it the 1500 VU spike exceeded Tempo's ingestion rate limit and traces were lost.
 mode: deployment
 image:
   repository: otel/opentelemetry-collector-contrib
 fullnameOverride: otel-collector
 resources:
   requests: { cpu: 100m, memory: 128Mi }
-  limits: { cpu: 500m, memory: 512Mi }
+  limits: { cpu: "1", memory: 1Gi }
 ports:
   metrics:
     enabled: true
@@ -21,6 +23,19 @@ config:
       limit_percentage: 80
       spike_limit_percentage: 20
     batch: {}
+    tail_sampling:
+      decision_wait: 5s
+      num_traces: 50000
+      policies:
+        - name: keep-errors
+          type: status_code
+          status_code: { status_codes: [ERROR] }
+        - name: keep-slow
+          type: latency
+          latency: { threshold_ms: 200 }
+        - name: sample-the-rest
+          type: probabilistic
+          probabilistic: { sampling_percentage: 10 }
     k8s_attributes:
       extract:
         metadata: [k8s.namespace.name, k8s.pod.name, k8s.deployment.name, k8s.node.name]
@@ -32,7 +47,7 @@ config:
     pipelines:
       traces:
         receivers: [otlp]
-        processors: [memory_limiter, k8s_attributes, batch]
+        processors: [memory_limiter, k8s_attributes, tail_sampling, batch]
         exporters: [otlp_grpc/tempo]
       metrics: null
       logs: null
