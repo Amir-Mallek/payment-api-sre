@@ -1,0 +1,38 @@
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+     execution: local
+        script: /scripts/load-test.js
+        output: Prometheus remote write (http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write)
+     scenarios: (100.00%) 3 scenarios, 1500 max VUs, 13m25s max duration (incl. graceful stop):
+              * ramp_up: Up to 100 looping VUs for 4m20s over 3 stages (gracefulRampDown: 10s, gracefulStop: 30s)
+              * stress: Up to 500 looping VUs for 7m30s over 3 stages (gracefulRampDown: 10s, startTime: 4m30s, gracefulStop: 30s)
+              * spike: Up to 1500 looping VUs for 50s over 3 stages (gracefulRampDown: 5s, startTime: 12m30s, gracefulStop: 30s)
+     ✗ no server error (status < 500)
+      ↳  99% — ✓ 257476 / ✗ 1220
+     checks.........................: 99.52% 257476 out of 258696
+     data_received..................: 69 MB  87 kB/s
+     data_sent......................: 37 MB  46 kB/s
+     http_req_blocked...............: avg=6.24µs  med=4.16µs  p(90)=5.65µs   p(95)=6.34µs   p(99)=35.76µs  max=7.81ms  
+     http_req_connecting............: avg=1.44µs  med=0s      p(90)=0s       p(95)=0s       p(99)=0s       max=7.77ms  
+   ✓ http_req_duration..............: avg=33.71ms med=1.78ms  p(90)=112.77ms p(95)=141.56ms p(99)=372.79ms max=1.68s   
+       { expected_response:true }...: avg=33.57ms med=1.78ms  p(90)=112.43ms p(95)=141.21ms p(99)=373.48ms max=1.68s   
+     ✓ { test_phase:ramp_up }.......: avg=24.24ms med=1.28ms  p(90)=96.89ms  p(95)=125.09ms p(99)=147.88ms max=912.21ms
+     ✗ { test_phase:spike }.........: avg=64.09ms med=3.82ms  p(90)=177.51ms p(95)=286.68ms p(99)=593.86ms max=1.68s   
+     ✓ { test_phase:stress }........: avg=25.16ms med=1.65ms  p(90)=95.85ms  p(95)=125.81ms p(99)=149.8ms  max=947.76ms
+   ✓ http_req_failed................: 0.47%  1220 out of 258696
+     ✓ { test_phase:ramp_up }.......: 0.34%  64 out of 18579
+     ✗ { test_phase:spike }.........: 1.10%  631 out of 57247
+     ✓ { test_phase:stress }........: 0.28%  525 out of 182870
+     http_req_receiving.............: avg=1.42ms  med=147.4µs p(90)=707.17µs p(95)=2.86ms   p(99)=34.94ms  max=310.01ms
+     http_req_sending...............: avg=13.43µs med=11.77µs p(90)=17.53µs  p(95)=20.35µs  p(99)=32.5µs   max=51.23ms 
+     http_req_tls_handshaking.......: avg=0s      med=0s      p(90)=0s       p(95)=0s       p(99)=0s       max=0s      
+     http_req_waiting...............: avg=32.26ms med=1.56ms  p(90)=110.99ms p(95)=139.3ms  p(99)=328.55ms max=1.37s   
+     http_reqs......................: 258696 322.88593/s
+     iteration_duration.............: avg=1.03s   med=1.03s   p(90)=1.43s    p(95)=1.48s    p(99)=1.61s    max=2.89s   
+     iterations.....................: 258696 322.88593/s
+     vus............................: 17     min=0                max=1500
+     vus_max........................: 1500   min=1500             max=1500
+time="2026-10-23T10:34:53Z" level=error msg="thresholds on metrics 'http_req_duration{test_phase:spike}, http_req_failed{test_phase:spike}' have been crossed"

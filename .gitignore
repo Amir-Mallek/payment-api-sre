@@ -7,3 +7,4 @@ coverage.xml
 coverage.lcov
 .scannerwork/
 k6/results/*.json
+k6/results/k6-*.txt
