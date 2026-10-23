@@ -9,4 +9,5 @@ print(f"## SonarQube Quality Gate: {icon}\n")
 print("| Metric | Status | Actual | Threshold |")
 print("|---|---|---|---|")
 for c in status.get("conditions", []):
-    print(f"| {c['metricKey']} | {c['status']} | {c.get('actualValue', '-')} | {c['comparator']} {c['errorThreshold']} |")
+    actual = c.get("actualValue", "-")
+    print(f"| {c['metricKey']} | {c['status']} | {actual} | {c['comparator']} {c['errorThreshold']} |")
