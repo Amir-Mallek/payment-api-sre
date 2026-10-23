@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/payment-api-sre
+  IMAGE: ghcr.io/amir-mallek/payment-api-sre  # registry paths must be lowercase
 
 jobs:
   lint-test:
