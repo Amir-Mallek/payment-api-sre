@@ -1,0 +1,24 @@
+[project]
+name = "payment-api"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S311"]
+"app/main.py" = ["S311"]  # random is used for fault injection, not cryptography
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=app --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=lcov:coverage.lcov --cov-fail-under=85"
+
+[tool.coverage.run]
+source = ["app"]
+relative_files = true

@@ -1,0 +1,38 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/amir-mallek/payment-api-sre
+  # Updated automatically by the CI pipeline (GitOps). Never "latest": blocked by OPA Gatekeeper.
+  tag: "dev"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+env:
+  APP_ENV: production
+  FLAKY_ERROR_RATE: "0.1"
+  CHECKOUT_MIN_MS: "20"
+  CHECKOUT_MAX_MS: "150"
+  CHECKOUT_SLOW_RATIO: "0.02"
+  CHECKOUT_SLOW_MS: "900"
+  # Load shedding per pod: above this many concurrent requests the pod answers 503.
+  MAX_IN_FLIGHT: "60"
+
+otel:
+  endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70

@@ -1,0 +1,14 @@
+.venv
+.git
+tests
+deploy
+policies
+k6
+observability
+docs
+*.xml
+*.lcov
+.coverage
+__pycache__
+.pytest_cache
+.ruff_cache

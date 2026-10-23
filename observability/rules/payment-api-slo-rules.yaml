@@ -1,0 +1,167 @@
+# SLOs of payment-api (30-day window)
+#   availability: 99.5% of requests with HTTP status < 500  -> error budget 0.5%
+#   latency:      95% of requests served in < 200 ms (p95)   -> error budget 5%
+# Alerting follows the multi-window multi-burn-rate method (Google SRE Workbook, ch. 5):
+#   critical (page):  burn rate 14.4 = 2% of the 30d budget consumed in 1h (long 1h + short 5m windows)
+#   warning (Slack):  burn rate 6    = 5% of the 30d budget consumed in 6h (long 6h + short 30m windows)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: payment-api-slo
+  namespace: monitoring
+spec:
+  groups:
+    - name: payment-api-sli
+      interval: 15s
+      rules:
+        - record: slo:sli_error:ratio_rate5m
+          labels: { slo: availability }
+          expr: |
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api", status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api"}[5m]))
+        - record: slo:sli_error:ratio_rate30m
+          labels: { slo: availability }
+          expr: |
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api", status_code=~"5.."}[30m]))
+            /
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api"}[30m]))
+        - record: slo:sli_error:ratio_rate1h
+          labels: { slo: availability }
+          expr: |
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api", status_code=~"5.."}[1h]))
+            /
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api"}[1h]))
+        - record: slo:sli_error:ratio_rate6h
+          labels: { slo: availability }
+          expr: |
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api", status_code=~"5.."}[6h]))
+            /
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api"}[6h]))
+        - record: slo:sli_error:ratio_rate30d
+          labels: { slo: availability }
+          expr: |
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api", status_code=~"5.."}[30d]))
+            /
+            sum(rate(http_server_requests_total{namespace="payment", app_name="payment-api"}[30d]))
+        - record: slo:sli_error:ratio_rate5m
+          labels: { slo: latency }
+          expr: |
+            1 - (
+              sum(rate(http_server_request_duration_seconds_bucket{namespace="payment", app_name="payment-api", le="0.2"}[5m]))
+              /
+              sum(rate(http_server_request_duration_seconds_count{namespace="payment", app_name="payment-api"}[5m]))
+            )
+        - record: slo:sli_error:ratio_rate30m
+          labels: { slo: latency }
+          expr: |
+            1 - (
+              sum(rate(http_server_request_duration_seconds_bucket{namespace="payment", app_name="payment-api", le="0.2"}[30m]))
+              /
+              sum(rate(http_server_request_duration_seconds_count{namespace="payment", app_name="payment-api"}[30m]))
+            )
+        - record: slo:sli_error:ratio_rate1h
+          labels: { slo: latency }
+          expr: |
+            1 - (
+              sum(rate(http_server_request_duration_seconds_bucket{namespace="payment", app_name="payment-api", le="0.2"}[1h]))
+              /
+              sum(rate(http_server_request_duration_seconds_count{namespace="payment", app_name="payment-api"}[1h]))
+            )
+        - record: slo:sli_error:ratio_rate6h
+          labels: { slo: latency }
+          expr: |
+            1 - (
+              sum(rate(http_server_request_duration_seconds_bucket{namespace="payment", app_name="payment-api", le="0.2"}[6h]))
+              /
+              sum(rate(http_server_request_duration_seconds_count{namespace="payment", app_name="payment-api"}[6h]))
+            )
+        - record: slo:sli_error:ratio_rate30d
+          labels: { slo: latency }
+          expr: |
+            1 - (
+              sum(rate(http_server_request_duration_seconds_bucket{namespace="payment", app_name="payment-api", le="0.2"}[30d]))
+              /
+              sum(rate(http_server_request_duration_seconds_count{namespace="payment", app_name="payment-api"}[30d]))
+            )
+        - record: slo:objective:ratio
+          labels: { slo: availability }
+          expr: vector(0.995)
+        - record: slo:objective:ratio
+          labels: { slo: latency }
+          expr: vector(0.95)
+        # Remaining share of the 30-day error budget (1 = untouched, 0 = exhausted, < 0 = SLO breached).
+        - record: slo:error_budget_remaining:ratio30d
+          expr: |
+            1 - slo:sli_error:ratio_rate30d / on(slo) (1 - slo:objective:ratio)
+        - record: slo:burn_rate:1h
+          expr: slo:sli_error:ratio_rate1h / on(slo) (1 - slo:objective:ratio)
+        - record: slo:burn_rate:6h
+          expr: slo:sli_error:ratio_rate6h / on(slo) (1 - slo:objective:ratio)
+
+    - name: payment-api-slo-alerts
+      rules:
+        - alert: PaymentApiAvailabilityBudgetBurnCritical
+          expr: |
+            slo:sli_error:ratio_rate1h{slo="availability"} > (14.4 * 0.005)
+            and
+            slo:sli_error:ratio_rate5m{slo="availability"} > (14.4 * 0.005)
+          for: 1m
+          labels:
+            severity: critical
+            slo: availability
+            service: payment-api
+          annotations:
+            summary: "payment-api availability SLO: fast error budget burn (>= 14.4x)"
+            description: >-
+              HTTP 5xx error ratio is {{ $value | humanizePercentage }} over the last 5m and above 14.4x the budget over 1h:
+              at this pace 2% of the 30-day error budget is consumed every hour (budget gone in ~2 days).
+            runbook_url: https://github.com/Amir-Mallek/payment-api-sre/blob/main/docs/runbook.md
+        - alert: PaymentApiAvailabilityBudgetBurnWarning
+          expr: |
+            slo:sli_error:ratio_rate6h{slo="availability"} > (6 * 0.005)
+            and
+            slo:sli_error:ratio_rate30m{slo="availability"} > (6 * 0.005)
+          for: 2m
+          labels:
+            severity: warning
+            slo: availability
+            service: payment-api
+          annotations:
+            summary: "payment-api availability SLO: slow error budget burn (>= 6x)"
+            description: >-
+              HTTP 5xx error ratio is {{ $value | humanizePercentage }} over the last 30m and above 6x the budget over 6h:
+              5% of the 30-day error budget is consumed every 6 hours (budget gone in ~5 days).
+            runbook_url: https://github.com/Amir-Mallek/payment-api-sre/blob/main/docs/runbook.md
+        - alert: PaymentApiLatencyBudgetBurnCritical
+          expr: |
+            slo:sli_error:ratio_rate1h{slo="latency"} > (14.4 * 0.05)
+            and
+            slo:sli_error:ratio_rate5m{slo="latency"} > (14.4 * 0.05)
+          for: 1m
+          labels:
+            severity: critical
+            slo: latency
+            service: payment-api
+          annotations:
+            summary: "payment-api latency SLO: fast error budget burn (>= 14.4x)"
+            description: >-
+              share of requests slower than 200 ms is {{ $value | humanizePercentage }} over the last 5m and above 14.4x the budget over 1h:
+              at this pace 2% of the 30-day error budget is consumed every hour (budget gone in ~2 days).
+            runbook_url: https://github.com/Amir-Mallek/payment-api-sre/blob/main/docs/runbook.md
+        - alert: PaymentApiLatencyBudgetBurnWarning
+          expr: |
+            slo:sli_error:ratio_rate6h{slo="latency"} > (6 * 0.05)
+            and
+            slo:sli_error:ratio_rate30m{slo="latency"} > (6 * 0.05)
+          for: 2m
+          labels:
+            severity: warning
+            slo: latency
+            service: payment-api
+          annotations:
+            summary: "payment-api latency SLO: slow error budget burn (>= 6x)"
+            description: >-
+              share of requests slower than 200 ms is {{ $value | humanizePercentage }} over the last 30m and above 6x the budget over 6h:
+              5% of the 30-day error budget is consumed every 6 hours (budget gone in ~5 days).
+            runbook_url: https://github.com/Amir-Mallek/payment-api-sre/blob/main/docs/runbook.md

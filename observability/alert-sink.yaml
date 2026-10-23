@@ -1,0 +1,49 @@
+# Tiny HTTP server that logs every request body: stands in for PagerDuty and Slack in the lab.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-sink
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: alert-sink } }
+  template:
+    metadata: { labels: { app: alert-sink } }
+    spec:
+      containers:
+        - name: sink
+          image: python:3.12-alpine
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              import json
+              from http.server import BaseHTTPRequestHandler, HTTPServer
+
+              class Sink(BaseHTTPRequestHandler):
+                  def do_POST(self):
+                      body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                      for alert in body.get("alerts", []):
+                          print(json.dumps({"channel": self.path.strip("/"), "status": alert["status"],
+                                            "alertname": alert["labels"].get("alertname"),
+                                            "severity": alert["labels"].get("severity"),
+                                            "summary": alert["annotations"].get("summary")}))
+                      self.send_response(200)
+                      self.end_headers()
+
+                  def log_message(self, *args):
+                      pass
+
+              HTTPServer(("", 8080), Sink).serve_forever()
+          ports: [{ containerPort: 8080 }]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-sink
+  namespace: monitoring
+spec:
+  selector: { app: alert-sink }
+  ports: [{ port: 80, targetPort: 8080 }]

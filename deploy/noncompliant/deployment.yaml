@@ -1,0 +1,14 @@
+# Non-compliant on purpose: "latest" tag and no resources requests/limits.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-api-noncompliant
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: payment-api-noncompliant } }
+  template:
+    metadata: { labels: { app: payment-api-noncompliant } }
+    spec:
+      containers:
+        - name: payment-api
+          image: ghcr.io/amir-mallek/payment-api-sre:latest

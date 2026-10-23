@@ -1,0 +1,12 @@
+# Minimal ArgoCD for the lab: no Dex, no notifications, HTTP UI behind port-forward.
+configs:
+  params:
+    server.insecure: true
+  cm:
+    timeout.reconciliation: 60s
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  replicas: 1

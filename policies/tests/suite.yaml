@@ -1,0 +1,32 @@
+kind: Suite
+apiVersion: test.gatekeeper.sh/v1alpha1
+metadata:
+  name: payment-policies
+tests:
+  - name: disallow-latest-tag
+    template: ../templates/k8sdisallowlatesttag.yaml
+    constraint: ../constraints/disallow-latest-tag.yaml
+    cases:
+      - name: explicit-latest-is-rejected
+        object: bad-latest-tag.yaml
+        assertions: [{ violations: yes }]
+      - name: implicit-latest-is-rejected
+        object: bad-pod-implicit-latest.yaml
+        assertions: [{ violations: yes }]
+      - name: pinned-tag-is-accepted
+        object: good-deployment.yaml
+        assertions: [{ violations: no }]
+  - name: require-requests-and-limits
+    template: ../templates/k8srequiredresources.yaml
+    constraint: ../constraints/require-resources.yaml
+    cases:
+      - name: missing-resources-is-rejected
+        object: bad-no-resources.yaml
+        assertions: [{ violations: 4 }]
+      - name: partial-resources-is-rejected
+        object: bad-pod-implicit-latest.yaml
+        # 3 offline; the API server defaults requests.memory from limits.memory, leaving 2.
+        assertions: [{ violations: 3 }]
+      - name: complete-resources-is-accepted
+        object: good-deployment.yaml
+        assertions: [{ violations: no }]

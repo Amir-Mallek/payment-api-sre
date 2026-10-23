@@ -1,0 +1,12 @@
+# Must be REJECTED: no tag (implicit latest) and only a memory limit.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-implicit-latest
+  namespace: payment
+spec:
+  containers:
+    - name: web
+      image: nginx
+      resources:
+        limits: { memory: 128Mi }

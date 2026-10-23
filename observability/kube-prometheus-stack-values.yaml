@@ -1,0 +1,137 @@
+# Prometheus + Alertmanager + Grafana. Lab settings: single replicas, no persistence.
+
+# Control-plane components are not reachable on minikube; avoid false "target down" alerts.
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 7d
+    # Pick up every PrometheusRule / ServiceMonitor, not only the ones labelled for this release.
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Lets k6 push its client-side metrics (experimental-prometheus-rw output).
+    enableRemoteWriteReceiver: true
+    enableFeatures: [native-histograms]
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits: { memory: 2Gi }
+    # Auto-discovery of annotated pods: prometheus.io/scrape, prometheus.io/port, prometheus.io/path.
+    additionalScrapeConfigs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_app_kubernetes_io_(name|version)
+            replacement: app_$1
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+alertmanager:
+  alertmanagerSpec:
+    # Secret holding the Slack incoming-webhook URL (created by scripts/install-observability.sh).
+    secrets: [alertmanager-slack]
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: [alertname, slo]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+      routes:
+        - receiver: "null"
+          matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+        # Fast burn (14.4x): page the on-call engineer.
+        - receiver: pager
+          matchers: ['severity = "critical"', 'slo =~ ".+"']
+        # Slow burn (6x): Slack notification.
+        - receiver: slack
+          matchers: ['severity = "warning"', 'slo =~ ".+"']
+    receivers:
+      - name: "null"
+      - name: pager
+        # Simulated pager (PagerDuty/Opsgenie stand-in): logs every page it receives.
+        webhook_configs:
+          - url: http://alert-sink.monitoring.svc.cluster.local/pager
+            send_resolved: true
+      - name: slack
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/alertmanager-slack/url
+            channel: "#sre-alerts"
+            send_resolved: true
+            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ .Annotations.description }}{{ "\n" }}{{ end }}'
+        webhook_configs:
+          - url: http://alert-sink.monitoring.svc.cluster.local/slack
+            send_resolved: true
+    inhibit_rules:
+      # A page already covers the same SLO: silence the Slack warning.
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity = "warning"']
+        equal: [slo]
+
+grafana:
+  adminPassword: admin
+  defaultDashboardsTimezone: browser
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      jsonData:
+        # Log -> trace: turns the trace_id of each JSON log line into a link to Tempo.
+        derivedFields:
+          - name: TraceID
+            datasourceUid: tempo
+            matcherType: regex
+            matcherRegex: '"trace_id":\s*"(\w+)"'
+            url: "$${__value.raw}"
+            urlDisplayLabel: View trace in Tempo
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      access: proxy
+      url: http://tempo.monitoring.svc.cluster.local:3200
+      jsonData:
+        # Trace -> logs: from a span, open the Loki lines carrying the same trace_id.
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: "-5m"
+          spanEndTimeShift: "5m"
+          filterByTraceID: false
+          customQuery: true
+          query: '{app="payment-api"} | trace_id="$${__span.traceId}"'
+        tracesToMetrics:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+        lokiSearch:
+          datasourceUid: loki

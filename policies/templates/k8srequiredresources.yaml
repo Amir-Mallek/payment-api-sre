@@ -1,0 +1,59 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredresources
+  annotations:
+    description: Requires CPU and memory requests and limits on every container.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredResources
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            fields:
+              type: array
+              description: 'Required fields, e.g. ["requests.cpu", "limits.memory"].'
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredresources
+
+        default_fields := ["requests.cpu", "requests.memory", "limits.cpu", "limits.memory"]
+
+        required_fields = f {
+          f := input.parameters.fields
+        } else = default_fields
+
+        containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+        containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }
+        containers[c] {
+          c := input.review.object.spec.template.spec.containers[_]
+        }
+        containers[c] {
+          c := input.review.object.spec.template.spec.initContainers[_]
+        }
+        containers[c] {
+          c := input.review.object.spec.jobTemplate.spec.template.spec.containers[_]
+        }
+
+        violation[{"msg": msg}] {
+          c := containers[_]
+          field := required_fields[_]
+          parts := split(field, ".")
+          not has_value(c, parts[0], parts[1])
+          msg := sprintf("container <%v> must define resources.%v", [c.name, field])
+        }
+
+        has_value(c, section, name) {
+          value := c.resources[section][name]
+          value != ""
+        }

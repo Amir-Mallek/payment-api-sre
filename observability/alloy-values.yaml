@@ -1,0 +1,60 @@
+# Grafana Alloy: reads pod logs through the Kubernetes API (runtime independent) and ships them to Loki.
+# JSON logs are parsed so that level/route become labels and trace_id stays in the line (Loki -> Tempo link).
+controller:
+  type: deployment
+alloy:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  configMap:
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.pods.receiver]
+      }
+
+      loki.process "pods" {
+        stage.match {
+          selector = "{app=\"payment-api\"}"
+          stage.json {
+            expressions = { level = "level", http_route = "http_route", trace_id = "trace_id" }
+          }
+          stage.labels {
+            values = { level = "", http_route = "" }
+          }
+          stage.structured_metadata {
+            values = { trace_id = "" }
+          }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }

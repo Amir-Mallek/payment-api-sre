@@ -1,0 +1,21 @@
+# DEMO: an application whose manifest violates both Gatekeeper constraints.
+# The sync must fail: the Kubernetes API server (Gatekeeper admission webhook) rejects the Deployment.
+#   kubectl apply -f deploy/argocd/noncompliant-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: noncompliant-demo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Amir-Mallek/payment-api-sre.git
+    targetRevision: main
+    path: deploy/noncompliant
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: payment
+  syncPolicy:
+    automated: {}
+    retry:
+      limit: 1
