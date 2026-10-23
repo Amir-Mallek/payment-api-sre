@@ -7,4 +7,3 @@ coverage.xml
 coverage.lcov
 .scannerwork/
 k6/results/*.json
-.sonar-home/
