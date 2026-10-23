@@ -121,3 +121,9 @@ def test_load_shedding_returns_503_when_overloaded():
 
 def test_health_endpoints_bypass_load_shedding():
     assert make_client(max_in_flight=-1).get("/healthz").status_code == 200
+
+
+def test_checkout_fails_when_payment_gateway_is_down():
+    response = make_client(rng_value=0.5, checkout_error_rate=1.0).get("/checkout")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "payment gateway unavailable"

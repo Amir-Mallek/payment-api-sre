@@ -45,10 +45,20 @@ const allScenarios = {
     gracefulRampDown: '5s',
     tags: { test_phase: 'spike' },
   },
+  // Not part of the default run: steady traffic for the incident drill (SCENARIO=incident).
+  incident: {
+    executor: 'constant-vus',
+    vus: 120,
+    duration: '12m',
+    tags: { test_phase: 'incident' },
+  },
 };
 
 function selectScenarios() {
-  if (!__ENV.SCENARIO) return allScenarios;
+  if (!__ENV.SCENARIO) {
+    const { incident, ...standard } = allScenarios;
+    return standard;
+  }
   const chosen = { ...allScenarios[__ENV.SCENARIO] };
   delete chosen.startTime;
   return { [__ENV.SCENARIO]: chosen };

@@ -25,6 +25,7 @@ env:
   CHECKOUT_MAX_MS: "150"
   CHECKOUT_SLOW_RATIO: "0.02"
   CHECKOUT_SLOW_MS: "900"
+  CHECKOUT_ERROR_RATE: "0"
   # Load shedding per pod: above this many concurrent requests the pod answers 503.
   MAX_IN_FLIGHT: "60"
 

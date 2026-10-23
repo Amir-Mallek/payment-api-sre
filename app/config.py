@@ -22,6 +22,8 @@ class Settings:
     checkout_max_ms: float = field(default_factory=lambda: _float("CHECKOUT_MAX_MS", 150))
     checkout_slow_ratio: float = field(default_factory=lambda: _float("CHECKOUT_SLOW_RATIO", 0.02))
     checkout_slow_ms: float = field(default_factory=lambda: _float("CHECKOUT_SLOW_MS", 900))
+    # /checkout: failure rate of the (simulated) downstream payment gateway, used for incident drills.
+    checkout_error_rate: float = field(default_factory=lambda: _float("CHECKOUT_ERROR_RATE", 0))
     # /flaky: probability of answering HTTP 500.
     flaky_error_rate: float = field(default_factory=lambda: _float("FLAKY_ERROR_RATE", 0.1))
     # Load shedding: answer 503 when more requests than this are in flight (0 disables it).

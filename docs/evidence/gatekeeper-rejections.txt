@@ -1,0 +1,44 @@
+$ kubectl apply -f policies/tests/bad-latest-tag.yaml
+Error from server (Forbidden): error when creating "policies/tests/bad-latest-tag.yaml": admission webhook "validation.gatekeeper.sh" denied the request: [disallow-latest-tag] container <web> uses the forbidden tag 'latest' (image: nginx:latest)
+
+$ kubectl apply -f policies/tests/bad-no-resources.yaml
+Error from server (Forbidden): error when creating "policies/tests/bad-no-resources.yaml": admission webhook "validation.gatekeeper.sh" denied the request: [require-requests-and-limits] container <web> must define resources.limits.cpu
+[require-requests-and-limits] container <web> must define resources.limits.memory
+[require-requests-and-limits] container <web> must define resources.requests.cpu
+[require-requests-and-limits] container <web> must define resources.requests.memory
+
+$ kubectl apply -f policies/tests/bad-pod-implicit-latest.yaml
+Error from server (Forbidden): error when creating "policies/tests/bad-pod-implicit-latest.yaml": admission webhook "validation.gatekeeper.sh" denied the request: [disallow-latest-tag] container <web> has no image tag, which implies 'latest' (image: nginx)
+[require-requests-and-limits] container <web> must define resources.limits.cpu
+[require-requests-and-limits] container <web> must define resources.requests.cpu
+
+$ kubectl apply -f policies/tests/good-deployment.yaml
+deployment.apps/good-deployment created (server dry run)
+
+$ kubectl get constraints
+NAME                                                                 ENFORCEMENT-ACTION   TOTAL-VIOLATIONS
+k8sdisallowlatesttag.constraints.gatekeeper.sh/disallow-latest-tag   deny                 0
+
+NAME                                                                         ENFORCEMENT-ACTION   TOTAL-VIOLATIONS
+k8srequiredresources.constraints.gatekeeper.sh/require-requests-and-limits   deny                 0
+
+$ gator verify policies/tests/
+=== RUN   disallow-latest-tag
+    === RUN   explicit-latest-is-rejected
+    --- PASS: explicit-latest-is-rejected	(0.003s)
+    === RUN   implicit-latest-is-rejected
+    --- PASS: implicit-latest-is-rejected	(0.003s)
+    === RUN   pinned-tag-is-accepted
+    --- PASS: pinned-tag-is-accepted	(0.002s)
+--- PASS: disallow-latest-tag	(0.012s)
+=== RUN   require-requests-and-limits
+    === RUN   missing-resources-is-rejected
+    --- PASS: missing-resources-is-rejected	(0.004s)
+    === RUN   partial-resources-is-rejected
+    --- PASS: partial-resources-is-rejected	(0.002s)
+    === RUN   complete-resources-is-accepted
+    --- PASS: complete-resources-is-accepted	(0.002s)
+--- PASS: require-requests-and-limits	(0.010s)
+ok	policies/tests/suite.yaml	0.022s
+PASS
+

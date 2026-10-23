@@ -163,6 +163,8 @@ def create_app(settings: Settings | None = None, rng: random.Random | None = Non
                 delay_ms = rng.uniform(settings.checkout_min_ms, settings.checkout_max_ms)
             span.set_attribute("checkout.delay_ms", delay_ms)
             await asyncio.sleep(delay_ms / 1000)
+            if rng.random() < settings.checkout_error_rate:
+                raise FlakyError("payment gateway unavailable")
         return {"status": "processed", "delay_ms": round(delay_ms, 2)}
 
     @app.get("/flaky")
