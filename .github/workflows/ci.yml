@@ -90,7 +90,7 @@ jobs:
         run: |
           docker run --rm --network host --user "$(id -u):$(id -g)" -v "$PWD:/usr/src" \
             -e SONAR_HOST_URL=http://localhost:9000 -e SONAR_TOKEN=${{ steps.setup.outputs.token }} \
-            -e SONAR_USER_HOME=/usr/src/.scannerwork/.sonar \
+            -e SONAR_USER_HOME=/usr/src/.sonar-home \
             sonarsource/sonar-scanner-cli:12.2.0.4256_8.1.0
       - name: Quality Gate report
         if: always()
