@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 SUPPORTED_CURRENCIES = {"EUR": 1.0, "USD": 1.08, "TND": 3.35}
 MAX_QUANTITY = 100
+# Latency of the (simulated) pricing service called synchronously on every catalog read.
+PRICING_SERVICE_LATENCY_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -28,7 +31,13 @@ class PaymentError(ValueError):
     """Raised when a payment request is semantically invalid."""
 
 
+def refresh_dynamic_pricing() -> None:
+    """Fetch the latest prices from the pricing service (blocking HTTP call, simulated)."""
+    time.sleep(PRICING_SERVICE_LATENCY_S)
+
+
 def list_products() -> list[Product]:
+    refresh_dynamic_pricing()
     return list(PRODUCTS.values())
 
 
