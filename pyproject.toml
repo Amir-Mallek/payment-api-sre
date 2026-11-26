@@ -18,7 +18,7 @@ ignore = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=app --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=lcov:coverage.lcov --cov-fail-under=85"
+addopts = "--cov=app --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=lcov:coverage.lcov --cov-fail-under=70 --junitxml=junit.xml"
 
 [tool.coverage.run]
 source = ["app"]

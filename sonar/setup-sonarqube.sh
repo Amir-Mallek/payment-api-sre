@@ -4,7 +4,9 @@
 #   SONAR_HOST_URL=http://localhost:9000 ./sonar/setup-sonarqube.sh
 set -euo pipefail
 HOST="${SONAR_HOST_URL:-http://localhost:9000}"
-NEW_PASSWORD="${SONAR_ADMIN_PASSWORD:-Tp2-Sre-Admin-2026!}"
+# No password in the repository: a random one is generated for each ephemeral instance.
+NEW_PASSWORD="${SONAR_ADMIN_PASSWORD:-$(openssl rand -hex 16)Aa1!}"
+DEFAULT_AUTH=(-u "admin:${SONAR_DEFAULT_PASSWORD:-admin}")  # factory credentials of a fresh instance
 PROJECT_KEY="${SONAR_PROJECT_KEY:-payment-api}"
 GATE="TP-SRE-Gate"
 PROFILE="TP-SRE-Python"
@@ -14,8 +16,8 @@ log "waiting for SonarQube at $HOST"
 until curl -sf "$HOST/api/system/status" | grep -q '"status":"UP"'; do sleep 5; done
 
 # Fresh instances ship with admin/admin; switch to a strong password once.
-if curl -sf -u admin:admin "$HOST/api/authentication/validate" | grep -q '"valid":true'; then
-  curl -sf -u admin:admin -X POST "$HOST/api/users/change_password" \
+if curl -sf "${DEFAULT_AUTH[@]}" "$HOST/api/authentication/validate" | grep -q '"valid":true'; then
+  curl -sf "${DEFAULT_AUTH[@]}" -X POST "$HOST/api/users/change_password" \
     --data-urlencode login=admin --data-urlencode previousPassword=admin --data-urlencode "password=$NEW_PASSWORD"
 fi
 AUTH=(-u "admin:$NEW_PASSWORD")
@@ -39,8 +41,8 @@ curl -sf "${AUTH[@]}" "$HOST/api/qualitygates/show?name=$GATE" \
 condition() { api qualitygates/create_condition --data-urlencode "gateName=$GATE" \
   --data-urlencode "metric=$1" --data-urlencode "op=$2" --data-urlencode "error=$3" >/dev/null; }
 # Required by the assignment (new code, and overall code because CI analyses start from an empty instance):
-condition new_coverage LT 85                     # coverage < 85% -> fail
-condition coverage LT 85
+condition new_coverage LT 70                     # coverage < 70% -> fail (critical threshold of the TP)
+condition coverage LT 70
 condition new_security_hotspots_reviewed LT 100  # a single unreviewed hotspot -> fail
 condition security_hotspots_reviewed LT 100
 condition new_duplicated_lines_density GT 3      # duplication > 3% -> fail

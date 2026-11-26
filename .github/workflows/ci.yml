@@ -1,5 +1,15 @@
-# CI/CD: Lint & Test -> SonarQube analysis + Quality Gate -> Docker build -> Trivy scan (CRITICAL = fail)
-#        -> push to GHCR -> GitOps bump of the Helm values (ArgoCD then deploys).
+# PayFlex API - intelligent CI/CD pipeline with a dynamic Quality Gate.
+#
+#   secrets-scan (Gitleaks: source + config) ─┐
+#   lint-test (pytest + coverage) -> sonarqube ┼-> build-image (Docker, Trivy, Gitleaks on the artifact)
+#   policies (helm lint + Gatekeeper) ────────┘      -> integration-tests (ephemeral container + Newman, log scan)
+#                                                     -> performance-tests (k6)
+#   quality-gate (always runs): aggregates every indicator -> quality report or incident report
+#   deploy (main only, if the gate passed): push to GHCR + GitOps bump of the Helm values (ArgoCD syncs)
+#
+# Every stage classifies its own indicators with scripts/quality_gate.py:
+#   WARNING (non-critical) -> ::warning annotation + job summary, the pipeline continues;
+#   CRITICAL               -> the job fails, every following job is skipped (fail fast), nothing is deployed.
 name: ci
 
 on:
@@ -15,10 +25,29 @@ permissions:
 
 env:
   IMAGE: ghcr.io/amir-mallek/payment-api-sre  # registry paths must be lowercase
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.28.0
 
 jobs:
+  secrets-scan:
+    name: "Confidentialité : Gitleaks (code + config)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Gitleaks - source code and configuration files
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
+            dir /repo --config /repo/.gitleaks.toml --redact --no-banner \
+            --report-format json --report-path /repo/gitleaks-source.json --exit-code 0
+      - name: Confidentiality rate (must be 100 %)
+        run: python3 scripts/quality_gate.py secrets source gitleaks-source.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gate-secrets-source
+          path: gate-results/
+
   lint-test:
-    name: Lint & unit tests (coverage >= 85%)
+    name: "Tests unitaires + couverture"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,8 +61,11 @@ jobs:
         run: |
           ruff check --output-format=github .
           ruff format --check .
-      - name: Pytest (fails under 85% coverage)
+      - name: Pytest (coverage report, hard stop under 70 %)
         run: pytest
+      - name: Classify (coverage 70-80 % = warning, < 70 % or failed test = critical)
+        if: always()
+        run: python3 scripts/quality_gate.py unit junit.xml coverage.xml
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -41,9 +73,15 @@ jobs:
           path: |
             coverage.xml
             coverage.lcov
+            junit.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gate-unit
+          path: gate-results/
 
   policies:
-    name: Helm lint & Gatekeeper policy tests
+    name: "Helm lint + politiques Gatekeeper"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,10 +99,8 @@ jobs:
           ./gator test -f policies/templates/ -f policies/constraints/ -f rendered.yaml
 
   sonarqube:
-    name: SonarQube analysis & Quality Gate
+    name: "SonarQube + Quality Gate"
     needs: lint-test
-    # Runs even when the tests fail, so that the Quality Gate verdict is always reported.
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     services:
       # Ephemeral SonarQube instance, configured by sonar/setup-sonarqube.sh (no external account needed).
@@ -74,6 +110,8 @@ jobs:
         env:
           SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
         ports: ["9000:9000"]
+    env:
+      SONAR_HOST_URL: http://localhost:9000
     steps:
       - uses: actions/checkout@v7
         with:
@@ -83,29 +121,37 @@ jobs:
           name: coverage
       - name: Configure quality profile, quality gate and project
         id: setup
-        run: echo "token=$(./sonar/setup-sonarqube.sh)" >> "$GITHUB_OUTPUT"
-        env:
-          SONAR_HOST_URL: http://localhost:9000
+        run: |
+          TOKEN=$(./sonar/setup-sonarqube.sh)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
       - name: Scan and wait for the Quality Gate
+        env:
+          SONAR_TOKEN: ${{ steps.setup.outputs.token }}
         run: |
           chmod -R a+rwX .   # the scanner image runs as its own non-root user
           docker run --rm --network host -v "$PWD:/usr/src" \
-            -e SONAR_HOST_URL=http://localhost:9000 -e SONAR_TOKEN=${{ steps.setup.outputs.token }} \
-            sonarsource/sonar-scanner-cli:12.2.0.4256_8.1.0
-      - name: Quality Gate report
-        if: always()
+            -e SONAR_HOST_URL -e SONAR_TOKEN sonarsource/sonar-scanner-cli:12.2.0.4256_8.1.0
+      - name: Classify (gate failed or blocking bug = critical, code smells = warning)
+        if: always() && steps.setup.outcome == 'success'
+        env:
+          SONAR_TOKEN: ${{ steps.setup.outputs.token }}
         run: |
-          curl -s -u "${{ steps.setup.outputs.token }}:" \
-            "http://localhost:9000/api/qualitygates/project_status?projectKey=payment-api" \
-            | python3 sonar/gate-report.py >> "$GITHUB_STEP_SUMMARY"
+          api() { curl -sf -H "Authorization: Bearer $SONAR_TOKEN" "$SONAR_HOST_URL/api/$1" || echo '{}'; }
+          api "qualitygates/project_status?projectKey=payment-api" > sonar-gate.json
+          api "issues/search?componentKeys=payment-api&resolved=false&types=BUG,VULNERABILITY&severities=BLOCKER,CRITICAL&ps=1" > sonar-blocking.json
+          api "issues/search?componentKeys=payment-api&resolved=false&types=CODE_SMELL&ps=1" > sonar-smells.json
+          python3 scripts/quality_gate.py sonar sonar-gate.json sonar-blocking.json sonar-smells.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gate-sonar
+          path: gate-results/
 
-  build-scan-push:
-    name: Docker build, Trivy scan, push
-    needs: [sonarqube, policies]
+  build-image:
+    name: "Build Docker + Trivy + scan de l'artefact"
+    needs: [secrets-scan, sonarqube, policies]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
@@ -121,40 +167,164 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Trivy vulnerability scan (fails on CRITICAL)
+      - name: Trivy vulnerability scan (CRITICAL CVE = fail)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache" \
             aquasec/trivy:0.58.1 image --no-progress --severity CRITICAL --ignore-unfixed --exit-code 1 \
             "$IMAGE:${{ steps.meta.outputs.tag }}"
-      - name: Trivy full report (informational)
-        if: always()
+      - name: Gitleaks - artifact (application files and image metadata)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache" \
-            aquasec/trivy:0.58.1 image --no-progress --severity HIGH,CRITICAL \
-            "$IMAGE:${{ steps.meta.outputs.tag }}" | tee trivy-report.txt
+          mkdir -p artifact
+          cid=$(docker create "$IMAGE:${{ steps.meta.outputs.tag }}")
+          docker cp "$cid:/srv/." artifact/srv
+          docker inspect "$IMAGE:${{ steps.meta.outputs.tag }}" > artifact/image-config.json   # ENV, labels
+          docker rm "$cid" >/dev/null
+          cp .gitleaks.toml artifact/
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/artifact:/scan" "$GITLEAKS_IMAGE" \
+            dir /scan --config /scan/.gitleaks.toml --redact --no-banner \
+            --report-format json --report-path /scan/gitleaks-artifact.json --exit-code 0
+          mv artifact/gitleaks-artifact.json .
+      - name: Confidentiality rate of the artifact (must be 100 %)
+        run: python3 scripts/quality_gate.py secrets artifact gitleaks-artifact.json
+      - name: Save image for the test stages
+        run: docker save "$IMAGE:${{ steps.meta.outputs.tag }}" | gzip > image.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image
+          path: image.tar.gz
+          retention-days: 1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: trivy-report
-          path: trivy-report.txt
-      - name: Push to GHCR
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "$IMAGE:${{ steps.meta.outputs.tag }}"
+          name: gate-secrets-artifact
+          path: gate-results/
 
-  gitops-update:
-    name: GitOps - bump image tag (ArgoCD syncs)
-    needs: build-scan-push
-    if: github.event_name != 'pull_request'
+  integration-tests:
+    name: "Tests d'intégration : conteneur éphémère + Newman"
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: image
+      - name: Start the API in an ephemeral container
+        run: |
+          gunzip -c image.tar.gz | docker load
+          docker run -d --name payflex -p 8000:8000 "$IMAGE:${{ needs.build-image.outputs.tag }}"
+          for i in $(seq 30); do curl -sf http://localhost:8000/healthz && exit 0; sleep 1; done
+          docker logs payflex; exit 1
+      - name: Newman API scenario
+        run: |
+          mkdir -p reports && chmod 777 reports
+          docker run --rm --network host -v "$PWD/postman:/etc/newman:ro" -v "$PWD/reports:/out" \
+            postman/newman:6-alpine run payflex.postman_collection.json \
+            --env-var baseUrl=http://localhost:8000 -r cli,json,junit \
+            --reporter-json-export /out/newman-report.json --reporter-junit-export /out/newman-junit.xml
+      - name: Classify (any failed assertion = critical regression)
+        if: always()
+        run: python3 scripts/quality_gate.py integration reports/newman-report.json
+      - name: Gitleaks - application logs (no PAN, token or password logged)
+        if: success()
+        run: |
+          mkdir -p logs && docker logs payflex > logs/payflex.log 2>&1
+          cp .gitleaks.toml logs/
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/logs:/scan" "$GITLEAKS_IMAGE" \
+            dir /scan --config /scan/.gitleaks.toml --redact --no-banner \
+            --report-format json --report-path /scan/gitleaks-logs.json --exit-code 0
+          python3 scripts/quality_gate.py secrets logs logs/gitleaks-logs.json
+      - name: Stop the container
+        if: always()
+        run: docker rm -f payflex || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: newman-report
+          path: reports/
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gate-integration
+          path: gate-results/
+
+  performance-tests:
+    name: "Tests de performance k6"
+    needs: [build-image, integration-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: image
+      - name: Start the API in an ephemeral container
+        run: |
+          gunzip -c image.tar.gz | docker load
+          docker run -d --name payflex -p 8000:8000 "$IMAGE:${{ needs.build-image.outputs.tag }}"
+          for i in $(seq 30); do curl -sf http://localhost:8000/healthz && exit 0; sleep 1; done
+          docker logs payflex; exit 1
+      - uses: grafana/setup-k6-action@v1
+      - name: k6 load test (aborts as soon as p95 > 500 ms or errors > 2 %)
+        run: k6 run -e BASE_URL=http://localhost:8000 --summary-export=k6-summary.json k6/ci-perf.js
+      - name: Classify (p95 200-500 ms = warning, > 500 ms or errors > 2 % = critical)
+        if: always()
+        run: python3 scripts/quality_gate.py perf k6-summary.json
+      - name: Stop the container
+        if: always()
+        run: docker rm -f payflex || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: k6-summary
+          path: k6-summary.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gate-perf
+          path: gate-results/
+
+  quality-gate:
+    name: "Quality Gate : classification + rapport"
+    needs: [secrets-scan, lint-test, policies, sonarqube, build-image, integration-tests, performance-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: gate-*
+          merge-multiple: true
+          path: gate-results
+      - name: Quality report / incident report
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/quality_gate.py report gate-results --needs "$NEEDS" --out quality-report.md
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-report
+          path: quality-report.md
+
+  deploy:
+    name: "Déploiement : push GHCR + GitOps (ArgoCD)"
+    needs: [build-image, quality-gate]
+    if: github.event_name != 'pull_request' && needs.quality-gate.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v7
-      - name: Update deploy/helm/payment-api/values.yaml
+      - uses: actions/download-artifact@v8
+        with:
+          name: image
+      - name: Push to GHCR
         run: |
-          TAG=${{ needs.build-scan-push.outputs.tag }}
+          gunzip -c image.tar.gz | docker load
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:${{ needs.build-image.outputs.tag }}"
+      - name: GitOps - bump deploy/helm/payment-api/values.yaml
+        run: |
+          TAG=${{ needs.build-image.outputs.tag }}
           sed -i "s|^  tag: .*|  tag: \"$TAG\"|" deploy/helm/payment-api/values.yaml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

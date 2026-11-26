@@ -1,0 +1,280 @@
+{
+  "info": {
+    "name": "PayFlex API - integration",
+    "description": "API contract and data flow scenario run by Newman against the ephemeral Docker container.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "unitPrice",
+      "value": ""
+    },
+    {
+      "key": "card",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health check",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/healthz",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('status ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Readiness",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/readyz",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('ready', () => pm.expect(pm.response.json().status).to.eql('ready'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List products",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/products",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('non-empty catalog', () => pm.expect(body).to.be.an('array').that.is.not.empty);",
+              "pm.test('product contract', () => body.forEach(p => pm.expect(p).to.have.all.keys('id', 'name', 'price_cents', 'stock')));",
+              "pm.test('latency < 200 ms', () => pm.expect(pm.response.responseTime).to.be.below(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get product 1",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/products/1",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('id = 1', () => pm.expect(pm.response.json().id).to.eql(1));",
+              "pm.collectionVariables.set('unitPrice', pm.response.json().price_cents);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Unknown product -> 404",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/products/999",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('404', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment accepted",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/payments",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"product_id\": 1, \"quantity\": 2, \"currency\": \"EUR\", \"card_number\": \"{{card}}\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Luhn-valid Visa number generated at run time: no card number is stored in the repository,",
+              "// and if the API ever logged it, the Gitleaks scan of the container logs would catch it.",
+              "const d = [4]; while (d.length < 15) d.push(Math.floor(Math.random() * 10));",
+              "let sum = 0; d.slice().reverse().forEach((x, i) => { let v = i % 2 === 0 ? x * 2 : x; sum += v > 9 ? v - 9 : v; });",
+              "d.push((10 - (sum % 10)) % 10);",
+              "pm.collectionVariables.set('card', d.join(''));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const p = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(p.status).to.eql('accepted'));",
+              "pm.test('amount = 2 x unit price', () => pm.expect(p.amount_cents).to.eql(2 * Number(pm.collectionVariables.get('unitPrice'))));",
+              "pm.test('payment id is a UUID', () => pm.expect(p.payment_id).to.match(/^[0-9a-f-]{36}$/));",
+              "const card = pm.collectionVariables.get('card');",
+              "pm.test('card is masked (no PAN in response)', () => { pm.expect(p.card).to.eql('*'.repeat(12) + card.slice(-4)); pm.expect(pm.response.text()).to.not.include(card); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invalid card -> 422",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/payments",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"product_id\": 1, \"card_number\": \"4111111111111112\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422', () => pm.response.to.have.status(422));",
+              "pm.test('reason', () => pm.expect(pm.response.json().detail).to.eql('invalid card number'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Out of stock -> 422",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/payments",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"product_id\": 4, \"card_number\": \"5555555555554444\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422', () => pm.response.to.have.status(422));",
+              "pm.test('reason', () => pm.expect(pm.response.json().detail).to.eql('insufficient stock'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Unsupported currency -> 422",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/payments",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"product_id\": 2, \"currency\": \"GBP\", \"card_number\": \"5555555555554444\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422', () => pm.response.to.have.status(422));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Prometheus metrics exposed",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/metrics",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('payments counter', () => pm.expect(pm.response.text()).to.include('payments'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

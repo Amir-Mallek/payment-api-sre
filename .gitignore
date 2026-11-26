@@ -8,3 +8,12 @@ coverage.lcov
 .scannerwork/
 k6/results/*.json
 k6/results/k6-*.txt
+junit.xml
+gate-results/
+quality-report.md
+gitleaks-*.json
+k6-summary.json
+reports/
+logs/
+artifact/
+image.tar.gz

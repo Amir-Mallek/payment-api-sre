@@ -1,0 +1,27 @@
+# Gitleaks configuration of PayFlex (payment API): default rules (passwords, OAuth tokens, private keys,
+# cloud/API keys...) + PII rules for card numbers. Used on the source tree, the Docker artifact and the logs.
+title = "PayFlex confidentiality rules"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "pii-card-number"
+description = "PII: payment card number (PAN) in clear text"
+regex = '''\b(?:4[0-9]{15}|4[0-9]{12}|5[1-5][0-9]{14}|2[2-7][0-9]{14}|3[47][0-9]{13})\b'''
+tags = ["pii", "pci-dss"]
+
+[allowlist]
+description = "Public test card numbers published by payment providers (not real cards)"
+regexes = [
+  '''4111111111111111''',
+  '''4111111111111112''',
+  '''5555555555554444''',
+  '''378282246310005''',
+  '''4539148803436467''',
+]
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)\.git/''',
+  '''coverage\.(xml|lcov)$''',
+]
