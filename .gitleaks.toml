@@ -12,8 +12,11 @@ regex = '''\b(?:4[0-9]{15}|4[0-9]{12}|5[1-5][0-9]{14}|2[2-7][0-9]{14}|3[47][0-9]
 tags = ["pii", "pci-dss"]
 
 [allowlist]
-description = "Public test card numbers published by payment providers (not real cards)"
+description = "Known false positives: public test cards, public GPG fingerprint of the python base image"
 regexes = [
+  # GPG_KEY env of the official python image = fingerprint of the CPython release manager's PUBLIC key.
+  '''7169605F62C751356D054A26A821E680E5FA6305''',
+  # Test card numbers published by payment providers (not real cards).
   '''4111111111111111''',
   '''4111111111111112''',
   '''5555555555554444''',
