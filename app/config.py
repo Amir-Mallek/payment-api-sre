@@ -28,3 +28,8 @@ class Settings:
     flaky_error_rate: float = field(default_factory=lambda: _float("FLAKY_ERROR_RATE", 0.1))
     # Load shedding: answer 503 when more requests than this are in flight (0 disables it).
     max_in_flight: int = field(default_factory=lambda: int(os.getenv("MAX_IN_FLIGHT", "0")))
+    # Payment gateway credentials and the card used by the nightly reconciliation job.
+    gateway_api_key: str = field(
+        default_factory=lambda: os.getenv("GATEWAY_API_KEY", "gw_live_7Hq2Lx9TzR4vB8mN3kP6sW1yD5fJ0cAe")
+    )
+    reconciliation_card: str = "4970101234567896"
